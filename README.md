@@ -43,3 +43,6 @@ MTProxy (Go版) 一键管理脚本
 
 ```markdown
 bash <(curl -LfsS https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh)
+```
+
+测试
