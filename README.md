@@ -16,6 +16,16 @@
 
 3.对于任何因不当使用本脚本而导致的法律纠纷或后果，脚本作者及维护者概不负责。
 
+----------------------------
+
+## 📥 一键安装
+
+在你的服务器终端（SSH）中执行以下命令即可：
+
+```markdown
+bash <(curl -LfsS https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh)
+```
+
 ## ✨ 功能特性
 
 * **🚀 始终最新**：自动通过 GitHub API 获取最新版 `mtg` 内核，拒绝旧版本。
@@ -35,14 +45,3 @@ MTProxy (Go版) 一键管理脚本
 5. 重启 服务
 6. 卸载 MTProxy
 0. 退出
-----------------------------
-
-## 📥 一键安装
-
-在你的服务器终端（SSH）中执行以下命令即可：
-
-```markdown
-bash <(curl -LfsS https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh)
-```
-
-测试
