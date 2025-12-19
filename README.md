@@ -16,6 +16,9 @@
 bash <(curl -LfsS [https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh](https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh))
 
 
+
+
+
 ## ✨ 功能特性
 
 * **🚀 始终最新**：自动通过 GitHub API 获取最新版 `mtg` 内核，拒绝旧版本。
