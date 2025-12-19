@@ -26,25 +26,27 @@ MTProxy (Go版) 一键管理脚本
 请选择 [0-6]: 
 
 ✨ 功能特性
- * 🚀 始终最新：自动通过 GitHub API 获取最新版 mtg 内核，拒绝旧版本。
- * 🛡️ 强力抗封：默认配置 FakeTLS 模式（伪装成大厂域名），有效对抗干扰。
- * 🐧 多系统支持：完美支持 CentOS 7+, Debian 8+, Ubuntu 16+, Alpine Linux。
- * ⚡ BBR 加速：内置一键开启 BBR 拥塞控制，提升网络吞吐量。
- * 🔧 极简管理：提供简单的交互式菜单，支持安装、卸载、重启和查看连接信息。
-📥 一键安装
-在你的服务器终端（SSH）中执行以下命令即可：
+
+
+
+
+​🚀 始终最新：自动通过 GitHub API 获取最新版 mtg 内核，拒绝旧版本。
+
+
+​🛡️ 强力抗封：默认配置 FakeTLS 模式（伪装成大厂域名），有效对抗干扰。
+
+
+​🐧 多系统支持：完美支持 CentOS 7+, Debian 8+, Ubuntu 16+, Alpine Linux。
+
+
+​⚡ BBR 加速：内置一键开启 BBR 拥塞控制，提升网络吞吐量。
+
+
+​🔧 极简管理：提供简单的交互式菜单，支持安装、卸载、重启和查看连接信息。
+
+
+​📥 一键安装
+
+​在你的服务器终端（SSH）中执行以下命令即可：
 bash <(curl -LfsS [https://raw.githubusercontent.com/weaponchiang/MTProxy/refs/heads/main/mtp.sh](https://raw.githubusercontent.com/weaponchiang/MTProxy/refs/heads/main/mtp.sh))
 
-📖 详细指南
-1. 安装与配置
-首次运行脚本时，选择 1. 安装 / 重置配置。
- * 端口：按回车默认生成随机端口，或手动输入指定端口。
- * 伪装域名：默认使用 www.microsoft.com，你也可以在安装时修改为其他国外可访问的大型网站域名（如 www.google.com, www.cloudflare.com 等）。
-2. 获取连接链接
-安装完成后，或后续通过菜单选择 2. 查看 链接信息，脚本会输出以 tg:// 开头的链接。直接复制该链接发送到 Telegram 中点击即可连接。
-3. 网络优化
-建议在安装完成后，选择 3. 开启 BBR 加速，脚本会自动修改系统参数以开启 BBR 拥塞控制，显著提升代理速度。
-⚠️ 注意事项
- * 请确保你的服务器端口（默认随机或你指定的端口）在防火墙或安全组中已放行（TCP）。
- * 本脚本仅供学习与技术交流使用，请勿用于非法用途。
-Project by weaponchiang
