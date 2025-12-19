@@ -18,9 +18,12 @@ set -u
 
 # --- 全局配置 ---
 BIN_PATH="/usr/local/bin/mtg"
+MTP_CMD="/usr/local/bin/mtp"
 CONFIG_DIR="/etc/mtg"
-# 默认 fallback 版本，以防 API 失败
+# 默认 fallback 版本
 DEFAULT_VERSION="v2.1.7"
+# 你的脚本在 GitHub 上的 Raw 地址 (用于生成快捷命令)
+SCRIPT_URL="https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh"
 
 # --- 1. 系统检查与依赖 ---
 
@@ -105,15 +108,13 @@ install_mtg() {
     VERSION=$(get_latest_version)
     echo -e "检测到最新版本: ${Green}${VERSION}${Nc}"
 
-    # 构造下载链接 (适配 9seconds/mtg 的命名规则)
-    # 文件名格式通常为: mtg-<version>-linux-<arch>.tar.gz
-    # 注意：版本号 v2.x.x 在文件名中通常不带 'v'，需要去掉
+    # 构造下载链接
     VER_NUM=${VERSION#v}
     FILENAME="mtg-${VER_NUM}-linux-${ARCH}.tar.gz"
     DOWNLOAD_URL="https://github.com/9seconds/mtg/releases/download/${VERSION}/${FILENAME}"
 
     TMP_DIR=$(mktemp -d)
-    echo -e "${Blue}正在下载: ${DOWNLOAD_URL}${Nc}"
+    echo -e "${Blue}正在下载核心: ${DOWNLOAD_URL}${Nc}"
     
     if ! wget -q --show-progress -O "${TMP_DIR}/${FILENAME}" "$DOWNLOAD_URL"; then
         echo -e "${Red}下载失败！请检查网络或 GitHub 连接。${Nc}"
@@ -123,7 +124,6 @@ install_mtg() {
 
     echo "正在解压..."
     tar -xzf "${TMP_DIR}/${FILENAME}" -C "${TMP_DIR}"
-    # 查找解压后的二进制文件
     BINARY=$(find "${TMP_DIR}" -type f -name mtg | head -n 1)
     
     if [ -f "$BINARY" ]; then
@@ -136,6 +136,16 @@ install_mtg() {
         exit 1
     fi
     rm -rf "$TMP_DIR"
+
+    # --- 修复 1: 安装快捷指令 mtp ---
+    echo -e "${Blue}正在安装快捷指令 'mtp'...${Nc}"
+    wget -q -O "$MTP_CMD" "$SCRIPT_URL"
+    if [ -s "$MTP_CMD" ]; then
+        chmod +x "$MTP_CMD"
+        echo -e "${Green}快捷指令安装成功！以后输入 'mtp' 即可管理。${Nc}"
+    else
+        echo -e "${Red}快捷指令下载失败，请检查 SCRIPT_URL 设置。${Nc}"
+    fi
 
     configure_mtg
 }
@@ -177,6 +187,7 @@ After=network.target
 
 [Service]
 Type=simple
+# 绑定到 0.0.0.0 同时支持 IPv4/IPv6 (取决于系统配置)
 ExecStart=${BIN_PATH} simple-run 0.0.0.0:${PORT} ${SECRET}
 Restart=always
 RestartSec=3
@@ -220,16 +231,32 @@ show_info() {
     fi
     source "${CONFIG_DIR}/config"
     
-    # 获取 IP
-    IPV4=$(curl -s4 --connect-timeout 3 ip.sb 2>/dev/null || echo "无法获取")
+    echo -e "${Blue}正在获取 IP 地址...${Nc}"
+    # 获取 IPv4
+    IPV4=$(curl -s4 --connect-timeout 3 ip.sb 2>/dev/null)
+    # 修复 2: 获取 IPv6
+    IPV6=$(curl -s6 --connect-timeout 3 ip.sb 2>/dev/null)
     
     echo -e "\n${Green}======= MTProxy 配置信息 =======${Nc}"
-    echo -e "IP地址: ${Yellow}${IPV4}${Nc}"
     echo -e "端口  : ${Yellow}${PORT}${Nc}"
     echo -e "密钥  : ${Yellow}${SECRET}${Nc}"
     echo -e "域名  : ${Blue}${DOMAIN}${Nc}"
     echo -e "--------------------------------"
-    echo -e "TG链接: ${Green}tg://proxy?server=${IPV4}&port=${PORT}&secret=${SECRET}${Nc}"
+    
+    if [ -n "$IPV4" ]; then
+        echo -e "IPv4  : ${Yellow}${IPV4}${Nc}"
+        echo -e "链接  : ${Green}tg://proxy?server=${IPV4}&port=${PORT}&secret=${SECRET}${Nc}"
+    else
+        echo -e "IPv4  : ${Red}无法获取${Nc}"
+    fi
+
+    # 修复 2: 显示 IPv6 链接 (注意 IPv6 在链接中需要用 [] 包裹)
+    if [ -n "$IPV6" ]; then
+        echo -e "--------------------------------"
+        echo -e "IPv6  : ${Yellow}${IPV6}${Nc}"
+        echo -e "链接  : ${Green}tg://proxy?server=[${IPV6}]&port=${PORT}&secret=${SECRET}${Nc}"
+    fi
+
     echo -e "================================\n"
 }
 
@@ -262,6 +289,8 @@ uninstall_mtg() {
     fi
 
     rm -f "$BIN_PATH"
+    # 删除快捷方式
+    rm -f "$MTP_CMD"
     rm -rf "$CONFIG_DIR"
     echo -e "${Green}卸载完成。${Nc}"
 }
@@ -303,7 +332,7 @@ check_root
 check_init_system
 
 if [ $# -gt 0 ]; then
-    # 支持命令行参数，方便非交互模式
+    # 支持命令行参数
     case "$1" in
         install) install_mtg ;;
         uninstall) uninstall_mtg ;;
