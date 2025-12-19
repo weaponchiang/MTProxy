@@ -8,6 +8,14 @@
 
 这是一个轻量级、智能化的 MTProxy 安装脚本。它会自动检测并下载 GitHub 上最新的 `mtg` 内核，支持主流 Linux 发行版（包括 Alpine），并内置了 FakeTLS 伪装和 BBR 加速开启功能。
 
+## 📥 一键安装
+
+在你的服务器终端（SSH）中执行以下命令即可：
+
+```bash
+bash <(curl -LfsS [https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh](https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh))
+
+
 ## ✨ 功能特性
 
 * **🚀 始终最新**：自动通过 GitHub API 获取最新版 `mtg` 内核，拒绝旧版本。
@@ -28,11 +36,3 @@ MTProxy (Go版) 一键管理脚本
 6. 卸载 MTProxy
 0. 退出
 ----------------------------
-
-
-## 📥 一键安装
-
-在你的服务器终端（SSH）中执行以下命令即可：
-
-```bash
-bash <(curl -LfsS [https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh](https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh))
