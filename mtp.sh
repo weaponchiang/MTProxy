@@ -13,16 +13,14 @@ Yellow="\033[33m"
 Blue="\033[34m"
 Nc="\033[0m"
 
-# 遇到错误不立即退出，由逻辑控制
 set -u
 
 # --- 全局配置 ---
 BIN_PATH="/usr/local/bin/mtg"
 MTP_CMD="/usr/local/bin/mtp"
 CONFIG_DIR="/etc/mtg"
-# 默认 fallback 版本
 DEFAULT_VERSION="v2.1.7"
-# 你的脚本在 GitHub 上的 Raw 地址 (用于生成快捷命令)
+# 指向你自己的仓库，确保生成的快捷指令 'mtp' 拉取的是这个脚本
 SCRIPT_URL="https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh"
 
 # --- 1. 系统检查与依赖 ---
@@ -47,8 +45,6 @@ check_init_system() {
 
 check_deps() {
     echo -e "${Blue}正在检查系统依赖...${Nc}"
-    
-    # 检测包管理器
     if command -v apk >/dev/null 2>&1; then
         PM="apk"
         PM_INSTALL="apk add --no-cache"
@@ -60,17 +56,28 @@ check_deps() {
         PM="yum"
         PM_INSTALL="yum install -y"
     else
-        echo -e "${Red}未检测到支持的包管理器，请手动安装 curl, wget, tar。${Nc}"
+        echo -e "${Red}未检测到支持的包管理器。${Nc}"
         return
     fi
 
-    deps="curl wget tar grep coreutils"
+    deps="curl wget tar grep coreutils ca-certificates"
     for dep in $deps; do
         if ! command -v "$dep" >/dev/null 2>&1; then
             echo -e "安装依赖: ${Yellow}$dep${Nc}"
             $PM_INSTALL $dep
         fi
     done
+}
+
+sync_time() {
+    echo -e "${Blue}正在同步系统时间...${Nc}"
+    # 尝试使用 timedatectl
+    if command -v timedatectl >/dev/null 2>&1; then
+        timedatectl set-ntp true 2>/dev/null
+    fi
+    # 强制 HTTP 时间同步 (兼容性最好，不依赖 NTP 端口)
+    date -s "$(curl -sI g.cn | grep Date | cut -d' ' -f3-6)Z" >/dev/null 2>&1
+    echo -e "${Green}时间同步完成。${Nc}"
 }
 
 detect_arch() {
@@ -85,7 +92,6 @@ detect_arch() {
 }
 
 get_latest_version() {
-    # 尝试从 GitHub API 获取最新版本号
     latest_version=$(curl -s https://api.github.com/repos/9seconds/mtg/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     if [ -z "$latest_version" ]; then
         echo "$DEFAULT_VERSION"
@@ -96,8 +102,42 @@ get_latest_version() {
 
 # --- 2. 核心功能函数 ---
 
+open_port() {
+    local PORT=$1
+    echo -e "${Blue}正在尝试开放防火墙端口: ${PORT}...${Nc}"
+    
+    # Firewalld
+    if command -v firewall-cmd >/dev/null 2>&1; then
+        if systemctl is-active --quiet firewalld; then
+            firewall-cmd --zone=public --add-port=${PORT}/tcp --permanent
+            firewall-cmd --reload
+        fi
+    fi
+    
+    # UFW
+    if command -v ufw >/dev/null 2>&1; then
+        if ufw status | grep -q "Status: active"; then
+            ufw allow ${PORT}/tcp
+        fi
+    fi
+
+    # Iptables
+    if command -v iptables >/dev/null 2>&1; then
+        if ! iptables -C INPUT -p tcp --dport ${PORT} -j ACCEPT 2>/dev/null; then
+            iptables -I INPUT -p tcp --dport ${PORT} -j ACCEPT
+            # 尝试保存
+            if command -v netfilter-persistent >/dev/null 2>&1; then
+                netfilter-persistent save 2>/dev/null
+            elif command -v service >/dev/null 2>&1; then
+                 service iptables save 2>/dev/null
+            fi
+        fi
+    fi
+}
+
 install_mtg() {
     check_deps
+    sync_time
     ARCH=$(detect_arch)
     if [ "$ARCH" = "unsupported" ]; then 
         echo -e "${Red}不支持的架构: $(uname -m)${Nc}"
@@ -108,7 +148,6 @@ install_mtg() {
     VERSION=$(get_latest_version)
     echo -e "检测到最新版本: ${Green}${VERSION}${Nc}"
 
-    # 构造下载链接
     VER_NUM=${VERSION#v}
     FILENAME="mtg-${VER_NUM}-linux-${ARCH}.tar.gz"
     DOWNLOAD_URL="https://github.com/9seconds/mtg/releases/download/${VERSION}/${FILENAME}"
@@ -137,14 +176,12 @@ install_mtg() {
     fi
     rm -rf "$TMP_DIR"
 
-    # --- 修复 1: 安装快捷指令 mtp ---
+    # 安装快捷指令
     echo -e "${Blue}正在安装快捷指令 'mtp'...${Nc}"
     wget -q -O "$MTP_CMD" "$SCRIPT_URL"
     if [ -s "$MTP_CMD" ]; then
         chmod +x "$MTP_CMD"
-        echo -e "${Green}快捷指令安装成功！以后输入 'mtp' 即可管理。${Nc}"
-    else
-        echo -e "${Red}快捷指令下载失败，请检查 SCRIPT_URL 设置。${Nc}"
+        echo -e "${Green}快捷指令安装成功！以后可以直接输入 'mtp' 管理。${Nc}"
     fi
 
     configure_mtg
@@ -165,11 +202,11 @@ configure_mtg() {
         PORT=$((10000 + RANDOM % 20000))
     fi
 
-    # 保存配置
     echo "PORT=${PORT}" > "${CONFIG_DIR}/config"
     echo "SECRET=${SECRET}" >> "${CONFIG_DIR}/config"
     echo "DOMAIN=${DOMAIN}" >> "${CONFIG_DIR}/config"
 
+    open_port "$PORT"
     install_service "$PORT" "$SECRET"
 }
 
@@ -187,7 +224,6 @@ After=network.target
 
 [Service]
 Type=simple
-# 绑定到 0.0.0.0 同时支持 IPv4/IPv6 (取决于系统配置)
 ExecStart=${BIN_PATH} simple-run 0.0.0.0:${PORT} ${SECRET}
 Restart=always
 RestartSec=3
@@ -218,8 +254,13 @@ EOF
         rc-service mtg restart
     fi
 
-    echo -e "${Green}服务安装并启动成功！${Nc}"
-    show_info
+    sleep 2
+    if check_status_bool; then
+        echo -e "${Green}服务启动成功！${Nc}"
+        show_info
+    else
+        echo -e "${Red}警告：服务启动失败。请检查端口是否被占用或系统日志。${Nc}"
+    fi
 }
 
 # --- 3. 管理功能 ---
@@ -232,38 +273,34 @@ show_info() {
     source "${CONFIG_DIR}/config"
     
     echo -e "${Blue}正在获取 IP 地址...${Nc}"
-    # 获取 IPv4
     IPV4=$(curl -s4 --connect-timeout 3 ip.sb 2>/dev/null)
-    # 修复 2: 获取 IPv6
     IPV6=$(curl -s6 --connect-timeout 3 ip.sb 2>/dev/null)
     
     echo -e "\n${Green}======= MTProxy 配置信息 =======${Nc}"
     echo -e "端口  : ${Yellow}${PORT}${Nc}"
     echo -e "密钥  : ${Yellow}${SECRET}${Nc}"
     echo -e "域名  : ${Blue}${DOMAIN}${Nc}"
-    echo -e "--------------------------------"
     
     if [ -n "$IPV4" ]; then
+        echo -e "--------------------------------"
         echo -e "IPv4  : ${Yellow}${IPV4}${Nc}"
         echo -e "链接  : ${Green}tg://proxy?server=${IPV4}&port=${PORT}&secret=${SECRET}${Nc}"
-    else
-        echo -e "IPv4  : ${Red}无法获取${Nc}"
     fi
 
-    # 修复 2: 显示 IPv6 链接 (注意 IPv6 在链接中需要用 [] 包裹)
     if [ -n "$IPV6" ]; then
         echo -e "--------------------------------"
         echo -e "IPv6  : ${Yellow}${IPV6}${Nc}"
         echo -e "链接  : ${Green}tg://proxy?server=[${IPV6}]&port=${PORT}&secret=${SECRET}${Nc}"
     fi
-
+    
     echo -e "================================\n"
+    echo -e "${Yellow}提示: 如无法连接，请务必检查云服务器后台防火墙/安全组是否放行 TCP 端口 ${PORT}。${Nc}\n"
 }
 
 enable_bbr() {
     echo -e "${Blue}正在检测 BBR...${Nc}"
     if sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
-        echo -e "${Green}BBR 已经开启，无需重复操作。${Nc}"
+        echo -e "${Green}BBR 已经开启。${Nc}"
     else
         echo "正在开启 BBR..."
         echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
@@ -274,32 +311,92 @@ enable_bbr() {
 }
 
 uninstall_mtg() {
-    read -p "确定要卸载吗？(y/n): " confirm
+    echo -e "${Red}警告：此操作将删除所有配置和程序，并关闭对应端口。${Nc}"
+    read -p "确定要完全卸载吗？(y/n): " confirm
     [[ "$confirm" != "y" ]] && return
 
+    # 1. 读取端口以便关闭防火墙
+    local REMOVE_PORT=""
+    if [ -f "${CONFIG_DIR}/config" ]; then
+        source "${CONFIG_DIR}/config"
+        REMOVE_PORT=$PORT
+    fi
+
+    echo -e "${Blue}正在停止服务...${Nc}"
     if [ "$INIT_SYSTEM" = "systemd" ]; then
         systemctl stop mtg
         systemctl disable mtg
         rm -f /etc/systemd/system/mtg.service
         systemctl daemon-reload
+        systemctl reset-failed 2>/dev/null
     else
         rc-service mtg stop
         rc-update del mtg default
         rm -f /etc/init.d/mtg
+        rm -f /run/mtg.pid
     fi
 
+    # 2. 清理防火墙规则
+    if [ -n "$REMOVE_PORT" ]; then
+        echo -e "${Blue}正在清理防火墙端口: ${REMOVE_PORT}...${Nc}"
+        
+        # Firewalld
+        if command -v firewall-cmd >/dev/null 2>&1; then
+            if systemctl is-active --quiet firewalld; then
+                firewall-cmd --zone=public --remove-port=${REMOVE_PORT}/tcp --permanent 2>/dev/null
+                firewall-cmd --reload 2>/dev/null
+            fi
+        fi
+        
+        # UFW
+        if command -v ufw >/dev/null 2>&1; then
+            ufw delete allow ${REMOVE_PORT}/tcp >/dev/null 2>&1
+        fi
+
+        # Iptables
+        if command -v iptables >/dev/null 2>&1; then
+            iptables -D INPUT -p tcp --dport ${REMOVE_PORT} -j ACCEPT 2>/dev/null
+            iptables -D INPUT -p tcp --dport ${REMOVE_PORT} -j ACCEPT 2>/dev/null
+            if command -v netfilter-persistent >/dev/null 2>&1; then
+                netfilter-persistent save 2>/dev/null
+            elif command -v service >/dev/null 2>&1; then
+                 service iptables save 2>/dev/null
+            fi
+        fi
+    fi
+
+    # 3. 删除文件
     rm -f "$BIN_PATH"
-    # 删除快捷方式
     rm -f "$MTP_CMD"
     rm -rf "$CONFIG_DIR"
-    echo -e "${Green}卸载完成。${Nc}"
+    echo -e "${Green}卸载清理完毕。${Nc}"
 }
 
-# --- 4. 菜单逻辑 ---
+# --- 4. 状态检测与菜单 ---
+
+check_status_bool() {
+    if [ "$INIT_SYSTEM" = "systemd" ]; then
+        if systemctl is-active --quiet mtg; then return 0; else return 1; fi
+    else
+        if pgrep -x "mtg" >/dev/null; then return 0; else return 1; fi
+    fi
+}
+
+check_status_display() {
+    if [ ! -f "$BIN_PATH" ]; then
+        echo -e "${Red}未安装 (Not Installed)${Nc}"
+    elif check_status_bool; then
+        echo -e "${Green}运行中 (Running)${Nc}"
+    else
+        echo -e "${Red}已停止 (Stopped)${Nc}"
+    fi
+}
 
 menu() {
     clear
     echo -e "${Green}MTProxy (Go版) 一键管理脚本${Nc}"
+    echo -e "----------------------------"
+    echo -e "当前状态: $(check_status_display)"
     echo -e "----------------------------"
     echo -e "1. 安装 / 重置配置"
     echo -e "2. 查看 链接信息"
@@ -317,10 +414,10 @@ menu() {
         3) enable_bbr ;;
         4) 
            if [ "$INIT_SYSTEM" = "systemd" ]; then systemctl stop mtg; else rc-service mtg stop; fi
-           echo "已停止" ;;
+           echo -e "${Green}已执行停止指令。${Nc}" ;;
         5) 
            if [ "$INIT_SYSTEM" = "systemd" ]; then systemctl restart mtg; else rc-service mtg restart; fi
-           echo "已重启" ;;
+           echo -e "${Green}已执行重启指令。${Nc}" ;;
         6) uninstall_mtg ;;
         0) exit 0 ;;
         *) echo "无效输入" ;;
@@ -332,7 +429,6 @@ check_root
 check_init_system
 
 if [ $# -gt 0 ]; then
-    # 支持命令行参数
     case "$1" in
         install) install_mtg ;;
         uninstall) uninstall_mtg ;;
