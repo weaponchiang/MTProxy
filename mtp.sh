@@ -2,7 +2,6 @@
 #=========================================================
 #   System Required: CentOS 7+ / Debian 8+ / Ubuntu 16+ / Alpine
 #   Description: MTProxy (Go version) One-click Installer
-#   Github: https://github.com/9seconds/mtg
 #=========================================================
 
 # 颜色定义
@@ -19,7 +18,7 @@ BIN_PATH="/usr/local/bin/mtg"
 MTP_CMD="/usr/local/bin/mtp"
 CONFIG_DIR="/etc/mtg"
 DEFAULT_VERSION="v2.1.7"
-# 脚本在线地址
+# 脚本在线地址（用于更新脚本自身）
 SCRIPT_URL="https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh"
 
 # --- 1. 系统检查与依赖 ---
@@ -42,33 +41,22 @@ check_init_system() {
     fi
 }
 
-check_deps() {
-    echo -e "${Blue}正在检查系统依赖...${Nc}"
-    if command -v apk >/dev/null 2>&1; then
-        PM="apk"
-        PM_INSTALL="apk add --no-cache"
-    elif command -v apt-get >/dev/null 2>&1; then
-        PM="apt-get"
-        PM_INSTALL="apt-get install -y"
-        $PM update -q
-    elif command -v yum >/dev/null 2>&1; then
-        PM="yum"
-        PM_INSTALL="yum install -y"
+# 获取版本信息的函数
+get_version_info() {
+    # 获取本地版本
+    if [ -f "$BIN_PATH" ]; then
+        LOCAL_VER=$($BIN_PATH version | awk '{print $2}' | head -n 1)
+        [ -z "$LOCAL_VER" ] && LOCAL_VER="未知"
     else
-        echo -e "${Red}未检测到支持的包管理器。${Nc}"
-        return
+        LOCAL_VER="未安装"
     fi
 
-    deps="curl wget tar grep coreutils ca-certificates"
-    for dep in $deps; do
-        if ! command -v "$dep" >/dev/null 2>&1; then
-            echo -e "安装依赖: ${Yellow}$dep${Nc}"
-            $PM_INSTALL $dep
-        fi
-    done
+    # 获取远程最新版本
+    REMOTE_VER=$(curl -s https://api.github.com/repos/9seconds/mtg/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    [ -z "$REMOTE_VER" ] && REMOTE_VER="获取失败"
 }
 
-# --- 2. 核心功能函数 ---
+# --- 2. 功能函数 ---
 
 open_port() {
     local PORT=$1
@@ -78,9 +66,7 @@ open_port() {
     if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
         ufw allow ${PORT}/tcp
     fi
-    if command -v iptables >/dev/null 2>&1; then
-        iptables -I INPUT -p tcp --dport ${PORT} -j ACCEPT 2>/dev/null
-    fi
+    iptables -I INPUT -p tcp --dport ${PORT} -j ACCEPT 2>/dev/null
 }
 
 close_port() {
@@ -89,27 +75,26 @@ close_port() {
         firewall-cmd --zone=public --remove-port=${PORT}/tcp --permanent && firewall-cmd --reload
     fi
     if command -v ufw >/dev/null 2>&1; then ufw delete allow ${PORT}/tcp >/dev/null 2>&1; fi
-    if command -v iptables >/dev/null 2>&1; then
-        iptables -D INPUT -p tcp --dport ${PORT} -j ACCEPT 2>/dev/null
-    fi
+    iptables -D INPUT -p tcp --dport ${PORT} -j ACCEPT 2>/dev/null
 }
 
+# 更新脚本自身
 update_script() {
-    echo -e "${Blue}正在从远程更新脚本...${Nc}"
+    echo -e "${Blue}正在更新管理脚本...${Nc}"
     TMP_FILE=$(mktemp)
     if wget -qO "$TMP_FILE" "$SCRIPT_URL"; then
         mv "$TMP_FILE" "$MTP_CMD"
         chmod +x "$MTP_CMD"
+        # 同时尝试更新当前运行的文件
         cp "$MTP_CMD" "$0" 2>/dev/null
-        echo -e "${Green}脚本更新成功！请重新运行 mtp 指令。${Nc}"
+        echo -e "${Green}脚本更新成功！请重新输入 mtp 运行。${Nc}"
         exit 0
     else
-        echo -e "${Red}脚本更新失败，请检查网络连接。${Nc}"
+        echo -e "${Red}更新失败，请检查网络。${Nc}"
     fi
 }
 
 install_mtg() {
-    check_deps
     ARCH=$(uname -m)
     case "$ARCH" in
         x86_64) ARCH="amd64" ;;
@@ -117,16 +102,18 @@ install_mtg() {
         *) echo -e "${Red}不支持的架构${Nc}"; exit 1 ;;
     esac
 
-    VERSION=$(curl -s https://api.github.com/repos/9seconds/mtg/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    VERSION=${VERSION:-$DEFAULT_VERSION}
-    VER_NUM=${VERSION#v}
+    get_version_info
+    VERSION=${REMOTE_VER}
+    [[ "$VERSION" == "获取失败" ]] && VERSION=$DEFAULT_VERSION
     
+    VER_NUM=${VERSION#v}
     DOWNLOAD_URL="https://github.com/9seconds/mtg/releases/download/${VERSION}/mtg-${VER_NUM}-linux-${ARCH}.tar.gz"
     
+    echo -e "${Blue}正在下载核心版本: ${VERSION}...${Nc}"
     wget -qO- "$DOWNLOAD_URL" | tar xz -C /tmp
     mv /tmp/mtg-*/mtg "$BIN_PATH" && chmod +x "$BIN_PATH"
     
-    # 安装快捷指令
+    # 顺便确保快捷指令也是最新的
     wget -qO "$MTP_CMD" "$SCRIPT_URL" && chmod +x "$MTP_CMD"
     
     configure_mtg
@@ -134,10 +121,11 @@ install_mtg() {
 
 configure_mtg() {
     mkdir -p "$CONFIG_DIR"
+    echo -e "${Yellow}--- 配置 FakeTLS ---${Nc}"
     read -p "请输入伪装域名 (默认: www.microsoft.com): " DOMAIN
     DOMAIN=${DOMAIN:-www.microsoft.com}
     SECRET=$($BIN_PATH generate-secret --hex "$DOMAIN")
-    read -p "请输入监听端口 (默认随机): " PORT
+    read -p "请输入端口 (默认随机): " PORT
     PORT=${PORT:-$((10000 + RANDOM % 20000))}
 
     echo -e "PORT=${PORT}\nSECRET=${SECRET}\nDOMAIN=${DOMAIN}" > "${CONFIG_DIR}/config"
@@ -146,7 +134,7 @@ configure_mtg() {
 }
 
 modify_config() {
-    if [ ! -f "${CONFIG_DIR}/config" ]; then echo -e "${Red}未安装${Nc}"; return; fi
+    if [ ! -f "${CONFIG_DIR}/config" ]; then echo -e "${Red}未安装，请先执行选项 1${Nc}"; return; fi
     source "${CONFIG_DIR}/config"
     OLD_PORT=$PORT
     
@@ -155,13 +143,16 @@ modify_config() {
     read -p "新域名 (当前: $DOMAIN): " NEW_DOMAIN
     NEW_DOMAIN=${NEW_DOMAIN:-$DOMAIN}
 
-    [[ "$NEW_PORT" != "$OLD_PORT" ]] && close_port "$OLD_PORT" && open_port "$NEW_PORT"
+    if [ "$NEW_PORT" != "$OLD_PORT" ]; then
+        close_port "$OLD_PORT"
+        open_port "$NEW_PORT"
+    fi
     
     NEW_SECRET=$($BIN_PATH generate-secret --hex "$NEW_DOMAIN")
     echo -e "PORT=${NEW_PORT}\nSECRET=${NEW_SECRET}\nDOMAIN=${NEW_DOMAIN}" > "${CONFIG_DIR}/config"
     
     install_service "$NEW_PORT" "$NEW_SECRET"
-    echo -e "${Green}配置修改完成！${Nc}"
+    echo -e "${Green}配置已更新并重启。${Nc}"
 }
 
 install_service() {
@@ -169,7 +160,7 @@ install_service() {
     if [ "$INIT_SYSTEM" = "systemd" ]; then
         cat > /etc/systemd/system/mtg.service <<EOF
 [Unit]
-Description=MTG
+Description=MTProxy Go Service
 After=network.target
 [Service]
 ExecStart=${BIN_PATH} simple-run 0.0.0.0:${PORT} ${SECRET}
@@ -192,15 +183,18 @@ EOF
 }
 
 show_info() {
-    [ ! -f "${CONFIG_DIR}/config" ] && return
+    if [ ! -f "${CONFIG_DIR}/config" ]; then echo -e "${Red}暂无配置信息${Nc}"; return; fi
     source "${CONFIG_DIR}/config"
-    IP4=$(curl -s4 --connect-timeout 5 ip.sb || curl -s4 ipinfo.io/ip)
-    IP6=$(curl -s6 --connect-timeout 5 ip.sb || curl -s6 ipinfo.io/ip)
+    
+    echo -e "${Blue}正在获取 IP 地址...${Nc}"
+    IP4=$(curl -s4 --connect-timeout 8 ip.sb || curl -s4 ipinfo.io/ip)
+    IP6=$(curl -s6 --connect-timeout 8 ip.sb || curl -s6 ipinfo.io/ip)
     
     echo -e "\n${Green}======= MTProxy 配置信息 =======${Nc}"
     echo -e "端口  : ${Yellow}${PORT}${Nc}"
     echo -e "域名  : ${Blue}${DOMAIN}${Nc}"
     echo -e "密钥  : ${Yellow}${SECRET}${Nc}"
+    
     if [ -n "$IP4" ]; then
         echo -e "IPv4链接: ${Green}tg://proxy?server=${IP4}&port=${PORT}&secret=${SECRET}${Nc}"
     fi
@@ -210,42 +204,53 @@ show_info() {
     echo -e "================================\n"
 }
 
-# --- 菜单 ---
-
-check_status_display() {
-    if [ ! -f "$BIN_PATH" ]; then echo -e "${Red}未安装${Nc}"
-    elif pgrep -x "mtg" >/dev/null; then echo -e "${Green}运行中${Nc}"
-    else echo -e "${Red}已停止${Nc}"; fi
-}
+# --- 菜单界面 ---
 
 menu() {
+    get_version_info
     clear
     echo -e "${Green}MTProxy (Go版) 管理脚本${Nc}"
-    echo -e "状态: $(check_status_display)"
     echo -e "----------------------------"
-    echo -e "1. 安装 MTProxy"
+    echo -e "本地版本: ${Blue}${LOCAL_VER}${Nc}"
+    echo -e "最新版本: ${Yellow}${REMOTE_VER}${Nc}"
+    echo -e "----------------------------"
+    if [ ! -f "$BIN_PATH" ]; then
+        STATUS="${Red}未安装${Nc}"
+    elif pgrep -x "mtg" >/dev/null; then
+        STATUS="${Green}运行中${Nc}"
+    else
+        STATUS="${Red}已停止${Nc}"
+    fi
+    echo -e "当前状态: $STATUS"
+    echo -e "----------------------------"
+    echo -e "1. 安装 / 覆盖安装 MTProxy"
     echo -e "2. 修改 配置 (端口/域名)"
     echo -e "3. 查看 链接信息"
-    echo -e "4. 更新 脚本"
+    echo -e "4. 更新 管理脚本 (mtp.sh)"
     echo -e "5. 重启 服务"
-    echo -e "6. 卸载 MTProxy"
+    echo -e "6. 停止 服务"
+    echo -e "7. 卸载 MTProxy"
     echo -e "0. 退出"
     echo -e "----------------------------"
-    read -p "选择: " choice
+    read -p "请选择 [0-7]: " choice
     case "$choice" in
         1) install_mtg ;;
         2) modify_config ;;
         3) show_info ;;
         4) update_script ;;
-        5) systemctl restart mtg 2>/dev/null || rc-service mtg restart 2>/dev/null ;;
-        6) 
+        5) systemctl restart mtg 2>/dev/null || rc-service mtg restart 2>/dev/null; echo -e "${Green}已尝试重启服务${Nc}" ;;
+        6) systemctl stop mtg 2>/dev/null || rc-service mtg stop 2>/dev/null; echo -e "${Yellow}已尝试停止服务${Nc}" ;;
+        7) 
             source "${CONFIG_DIR}/config" && close_port "$PORT"
-            systemctl stop mtg && rm -rf "$CONFIG_DIR" "$BIN_PATH" /etc/systemd/system/mtg.service
-            echo -e "${Green}已卸载${Nc}" ;;
+            systemctl stop mtg 2>/dev/null; systemctl disable mtg 2>/dev/null
+            rm -rf "$CONFIG_DIR" "$BIN_PATH" /etc/systemd/system/mtg.service /etc/init.d/mtg
+            echo -e "${Green}卸载完成。${Nc}" ;;
         0) exit 0 ;;
+        *) echo "无效选择" ;;
     esac
 }
 
+# --- 程序入口 ---
 check_root
 check_init_system
 menu
