@@ -90,7 +90,6 @@ install_go_version() {
     mv /tmp/mtg-*/mtg "$BIN_PATH" && chmod +x "$BIN_PATH"
     
     mkdir -p "$CONFIG_DIR"
-    # 修正默认域名为国内可直接访问的
     read -p "伪装域名 (默认: www.microsoft.com): " DOMAIN
     DOMAIN=${DOMAIN:-www.microsoft.com}
     SECRET=$($BIN_PATH generate-secret --hex "$DOMAIN")
@@ -115,7 +114,10 @@ EOF
 install_py_version() {
     echo -e "${Blue}正在准备 Python 环境...${Nc}"
     if command -v apt-get >/dev/null 2>&1; then
-        apt-get update && apt-get install -y python3-dev python3-pip git xxd
+        apt-get update && apt-get install -y python3-dev python3-pip git xxd || {
+            echo -e "${Red}检测到 dpkg 锁定或安装失败，请先运行: dpkg --configure -a${Nc}"
+            exit 1
+        }
     elif command -v yum >/dev/null 2>&1; then
         yum install -y python3-devel python3-pip git vim-common
     fi
@@ -123,13 +125,12 @@ install_py_version() {
     rm -rf "$PY_DIR"
     git clone https://github.com/alexbers/mtprotoproxy.git "$PY_DIR"
     pip3 install --upgrade pip
-    pip3 install -r "${PY_DIR}/requirements.txt" || pip3 install pycryptodome uvloop
+    pip3 install -r "${PY_DIR}/requirements.txt" --break-system-packages || pip3 install pycryptodome uvloop --break-system-packages
 
     mkdir -p "$CONFIG_DIR"
     read -p "伪装域名 (默认: www.icloud.com): " DOMAIN
     DOMAIN=${DOMAIN:-www.icloud.com}
     
-    # Python版密钥生成逻辑
     SECRET_HEX=$(head -c 16 /dev/urandom | xxd -ps | tr -d '[:space:]')
     DOMAIN_HEX=$(echo -n "$DOMAIN" | xxd -p | tr -d '[:space:]')
     FINAL_SECRET="ee${SECRET_HEX}${DOMAIN_HEX}"
@@ -156,8 +157,14 @@ EOF
 finish_install() {
     open_port "$1"
     systemctl daemon-reload && systemctl enable mtg && systemctl restart mtg
+    # 写入快捷键指令
     wget -qO "$MTP_CMD" "$SCRIPT_URL" && chmod +x "$MTP_CMD"
-    echo -e "${Green}服务已启动！${Nc}"
+    
+    echo -e "\n${Green}========================================${Nc}"
+    echo -e "${Green}服务已安装并启动成功！${Nc}"
+    echo -e "${Yellow}今后您可以直接输入 [ mtp ] 进入管理菜单。${Nc}"
+    echo -e "${Green}========================================${Nc}\n"
+    
     show_info
 }
 
@@ -218,7 +225,7 @@ uninstall_mtp() {
     systemctl stop mtg 2>/dev/null; systemctl disable mtg 2>/dev/null
     rm -f /etc/systemd/system/mtg.service
     rm -rf "$CONFIG_DIR" "$BIN_PATH" "$PY_DIR" "$MTP_CMD"
-    echo -e "${Green}卸载成功，环境已清理。${Nc}"
+    echo -e "${Green}卸载成功。${Nc}"
 }
 
 # --- 4. 菜单 ---
