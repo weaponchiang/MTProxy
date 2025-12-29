@@ -10,6 +10,7 @@ Yellow="\033[33m"
 Blue="\033[34m"
 Nc="\033[0m"
 
+# 取消严格模式
 set +u
 
 BIN_PATH="/usr/local/bin/mtg"
@@ -44,19 +45,19 @@ close_port() {
 }
 
 update_script() {
-    echo -e "${Blue}正在更新脚本...${Nc}"
+    echo -e "${Blue}正在从远程更新脚本...${Nc}"
     TMP_FILE=$(mktemp)
     if wget -qO "$TMP_FILE" "$SCRIPT_URL"; then
         mv "$TMP_FILE" "$MTP_CMD" && chmod +x "$MTP_CMD"
         cp "$MTP_CMD" "$0" 2>/dev/null
-        echo -e "${Green}更新成功！请重新输入 'mtp'。${Nc}"
+        echo -e "${Green}管理脚本更新成功！请重新运行。${Nc}"
         exit 0
     else
-        echo -e "${Red}更新失败。${Nc}"
+        echo -e "${Red}更新失败，请检查网络。${Nc}"
     fi
 }
 
-# --- 安装逻辑 ---
+# --- 核心安装逻辑 ---
 install_mtp() {
     echo -e "${Yellow}请选择版本：${Nc}"
     echo -e "1) Go 版     (9seconds - 推荐)"
@@ -69,6 +70,7 @@ install_go_version() {
     ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
     VERSION=$(curl -s https://api.github.com/repos/9seconds/mtg/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     VERSION=${VERSION:-"v2.1.7"}
+    echo -e "${Blue}正在下载 Go 核心...${Nc}"
     wget -qO- "https://github.com/9seconds/mtg/releases/download/${VERSION}/mtg-${VERSION#v}-linux-${ARCH}.tar.gz" | tar xz -C /tmp
     mv /tmp/mtg-*/mtg "$BIN_PATH" && chmod +x "$BIN_PATH"
     
@@ -80,9 +82,10 @@ install_go_version() {
     PORT=${PORT:-$((10000 + RANDOM % 20000))}
 
     echo -e "CORE=GO\nPORT=${PORT}\nSECRET=${SECRET}\nDOMAIN=${DOMAIN}" > "${CONFIG_DIR}/config"
+    
     cat > /etc/systemd/system/mtg.service <<EOF
 [Unit]
-Description=MTProxy Go Service
+Description=MTProxy Service
 After=network.target
 [Service]
 ExecStart=${BIN_PATH} simple-run 0.0.0.0:${PORT} ${SECRET}
@@ -94,6 +97,7 @@ EOF
 }
 
 install_py_version() {
+    echo -e "${Blue}正在配置 Python 环境...${Nc}"
     apt-get update && apt-get install -y python3-dev python3-pip git xxd python3-cryptography
     rm -rf "$PY_DIR"
     git clone https://github.com/alexbers/mtprotoproxy.git "$PY_DIR"
@@ -102,21 +106,24 @@ install_py_version() {
     mkdir -p "$CONFIG_DIR"
     read -p "伪装域名 (默认: azure.microsoft.com): " DOMAIN
     DOMAIN=${DOMAIN:-azure.microsoft.com}
+    
     RAW_S=$(head -c 16 /dev/urandom | xxd -ps -c 16 | tr -d '[:space:]')
     D_HEX=$(echo -n "$DOMAIN" | xxd -p -c 256 | tr -d '[:space:]')
     read -p "端口 (默认随机): " PORT
     PORT=${PORT:-$((10000 + RANDOM % 20000))}
 
     echo -e "CORE=PY\nPORT=${PORT}\nSECRET=ee${RAW_S}${D_HEX}\nDOMAIN=${DOMAIN}\nRAW_SECRET=${RAW_S}\nDOMAIN_HEX=${D_HEX}" > "${CONFIG_DIR}/config"
+
     cat > ${PY_DIR}/config.py <<EOF
 PORT = ${PORT}
 USERS = { "tg": "${RAW_S}" }
 MODES = { "classic": False, "secure": False, "tls": True }
 TLS_DOMAIN = "${DOMAIN}"
 EOF
+
     cat > /etc/systemd/system/mtg.service <<EOF
 [Unit]
-Description=MTProxy Python Service
+Description=MTProxy Service
 After=network.target
 [Service]
 WorkingDirectory=${PY_DIR}
@@ -133,8 +140,8 @@ finish_install() {
     systemctl daemon-reload && systemctl enable mtg && systemctl restart mtg
     wget -qO "$MTP_CMD" "$SCRIPT_URL" && chmod +x "$MTP_CMD"
     echo -e "\n${Green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${Nc}"
-    echo -e "${Green}   安装成功！服务已稳定运行。          ${Nc}"
-    echo -e "${Yellow}   管理快捷键: ${Red}mtp${Nc}"
+    echo -e "${Green}   安装成功！代理服务已在后台稳定运行。          ${Nc}"
+    echo -e "${Yellow}   >>> 管理快捷键: ${Red}mtp${Nc}"
     echo -e "${Green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${Nc}\n"
     show_info
 }
@@ -142,20 +149,25 @@ finish_install() {
 show_info() {
     [[ ! -f "${CONFIG_DIR}/config" ]] && return
     source "${CONFIG_DIR}/config"
+    echo -e "${Blue}正在探测外网地址 (支持 IPv6)...${Nc}"
     IP4=$(curl -s4 --connect-timeout 5 ip.sb || curl -s4 ipinfo.io/ip)
     IP6=$(curl -s6 --connect-timeout 5 ip.sb || curl -s6 icanhazip.com)
-    echo -e "\n${Green}======= MTProxy 信息 (${CORE}版) =======${Nc}"
-    echo -e "端口: ${Yellow}${PORT}${Nc} | 域名: ${Blue}${DOMAIN}${Nc}"
-    echo -e "密钥: ${Yellow}${SECRET}${Nc}"
-    [[ -n "$IP4" ]] && echo -e "IPv4: ${Green}tg://proxy?server=${IP4}&port=${PORT}&secret=${SECRET}${Nc}"
-    [[ -n "$IP6" ]] && echo -e "IPv6: ${Green}tg://proxy?server=[${IP6}]&port=${PORT}&secret=${SECRET}${Nc}"
+    
+    echo -e "\n${Green}======= MTProxy 链接信息 (${CORE}版) =======${Nc}"
+    echo -e "代理端口: ${Yellow}${PORT}${Nc} | 伪装域名: ${Blue}${DOMAIN}${Nc}"
+    echo -e "代理密钥: ${Yellow}${SECRET}${Nc}"
+    [[ -n "$IP4" ]] && echo -e "IPv4 链接: ${Green}tg://proxy?server=${IP4}&port=${PORT}&secret=${SECRET}${Nc}"
+    [[ -n "$IP6" ]] && echo -e "IPv6 链接: ${Green}tg://proxy?server=[${IP6}]&port=${PORT}&secret=${SECRET}${Nc}"
     echo -e "========================================\n"
 }
 
+# --- 菜单界面 ---
+
 menu() {
     clear
-    echo -e "${Green}MTProxy (Go/Python) 管理脚本${Nc}"
+    echo -e "${Green}MTProxy (Go/Python) 多版本脚本${Nc}"
     echo -e "----------------------------------"
+    
     if systemctl is-active --quiet mtg; then
         CURRENT_CORE="未知"
         [[ -f "${CONFIG_DIR}/config" ]] && source "${CONFIG_DIR}/config" && CURRENT_CORE=$CORE
@@ -163,28 +175,36 @@ menu() {
     else
         echo -e "服务状态: ${Red}○ 已停止${Nc}"
     fi
+    
     echo -e "----------------------------------"
     echo -e "1. 安装 / 重置"
     echo -e "2. 修改 端口/域名"
     echo -e "3. 查看 链接信息"
-    echo -e "4. 停止 代理服务"
-    echo -e "5. 重启 代理服务"
-    echo -e "6. 更新 管理脚本"
-    echo -e "7. 卸载 代理服务"
-    echo -e "0. 退出脚本"
+    echo -e "4. 更新 脚本"
+    echo -e "5. 重启 服务"
+    echo -e "6. 停止 服务"
+    echo -e "7. 卸载"
+    echo -e "0. 退出"
     echo -e "----------------------------------"
     read -p "请选择 [0-7]: " choice
     case "$choice" in
         1) install_mtp ;;
-        2) [[ ! -f "${CONFIG_DIR}/config" ]] && echo -e "${Red}未安装！${Nc}" && sleep 1 || { source "${CONFIG_DIR}/config"; close_port "$PORT"; install_mtp; } ;;
+        2) 
+            if [ ! -f "${CONFIG_DIR}/config" ]; then echo -e "${Red}未安装！${Nc}"; sleep 1; menu; fi
+            source "${CONFIG_DIR}/config"
+            close_port "$PORT"
+            install_mtp ;;
         3) show_info ;;
-        4) systemctl stop mtg && echo -e "${Yellow}服务已停止${Nc}" ;;
-        5) systemctl restart mtg && echo -e "${Green}服务已重启${Nc}" ;;
-        6) update_script ;;
+        4) update_script ;;
+        5) systemctl restart mtg; echo -e "${Green}服务已重启${Nc}" ;;
+        6) systemctl stop mtg; echo -e "${Yellow}服务已停止${Nc}" ;;
         7) 
             [[ -f "${CONFIG_DIR}/config" ]] && source "${CONFIG_DIR}/config" && close_port "$PORT"
-            systemctl stop mtg; systemctl disable mtg; rm -rf "$CONFIG_DIR" "$BIN_PATH" "$PY_DIR" "$MTP_CMD" /etc/systemd/system/mtg.service; echo "已卸载" ;;
-        0) exit 0 ;;
+            systemctl stop mtg 2>/dev/null; systemctl disable mtg 2>/dev/null
+            rm -f /etc/systemd/system/mtg.service
+            rm -rf "$CONFIG_DIR" "$BIN_PATH" "$PY_DIR" "$MTP_CMD"
+            echo -e "${Green}已彻底卸载。${Nc}" ;;
+        *) exit 0 ;;
     esac
 }
 
