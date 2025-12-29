@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #=========================================================
 #   System Required: CentOS 7+ / Debian 8+ / Ubuntu 16+
-#   Optimized for: alexbers/mtprotoproxy & 9seconds/mtg
+#   Description: MTProxy (Go & Python) One-click Installer
 #=========================================================
 
 Red="\033[31m"
@@ -26,8 +26,6 @@ check_init_system() {
     [[ ! -f /usr/bin/systemctl ]] && echo -e "${Red}错误: 仅支持 Systemd 系统。${Nc}" && exit 1
 }
 
-# --- 功能函数 ---
-
 open_port() {
     local PORT=$1
     if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
@@ -50,9 +48,11 @@ close_port() {
 }
 
 install_mtp() {
-    echo -e "${Yellow}选择版本：1. Go版 | 2. Python版${Nc}"
-    read -p "选择: " choice
-    if [[ "$choice" == "2" ]]; then install_py; else install_go; fi
+    echo -e "${Yellow}请选择版本：${Nc}"
+    echo -e "1) Go 版 (mtg)"
+    echo -e "2) Python 版 (mtprotoproxy)"
+    read -p "选择 [1-2]: " core_choice
+    [[ "$core_choice" == "2" ]] && install_py || install_go
 }
 
 install_go() {
@@ -96,8 +96,8 @@ install_py() {
     mkdir -p "$CONFIG_DIR"
     read -p "伪装域名 (www.microsoft.com): " DOMAIN
     DOMAIN=${DOMAIN:-www.microsoft.com}
-    RAW_S=$(head -c 16 /dev/urandom | xxd -ps -c 16)
-    D_HEX=$(echo -n "$DOMAIN" | xxd -p -c 256)
+    RAW_S=$(head -c 16 /dev/urandom | xxd -ps -c 16 | tr -d '[:space:]')
+    D_HEX=$(echo -n "$DOMAIN" | xxd -p -c 256 | tr -d '[:space:]')
     
     read -p "端口 (随机): " PORT
     PORT=${PORT:-$((10000 + RANDOM % 20000))}
@@ -109,6 +109,7 @@ DOMAIN=${DOMAIN}
 RAW_SECRET=${RAW_S}
 DOMAIN_HEX=${D_HEX}" > "${CONFIG_DIR}/config"
 
+    # 使用位置参数启动
     cat > /etc/systemd/system/mtg.service <<EOF
 [Unit]
 Description=MTProxy Service
@@ -127,7 +128,7 @@ finish() {
     open_port "$1"
     systemctl daemon-reload && systemctl enable mtg && systemctl restart mtg
     wget -qO "$MTP_CMD" "$SCRIPT_URL" && chmod +x "$MTP_CMD"
-    echo -e "${Green}安装成功！快捷键: mtp${Nc}"
+    echo -e "${Green}安装成功！快捷管理指令: mtp${Nc}"
     show_info
 }
 
@@ -135,27 +136,30 @@ show_info() {
     [[ ! -f "${CONFIG_DIR}/config" ]] && return
     source "${CONFIG_DIR}/config"
     IP=$(curl -s4 ip.sb || curl -s4 ipinfo.io/ip)
-    echo -e "\n${Green}======= MTProxy 信息 =======${Nc}
-端口  : ${Yellow}${PORT}${Nc}
-域名  : ${Blue}${DOMAIN}${Nc}
-密钥  : ${Yellow}${SECRET}${Nc}
-链接  : ${Green}tg://proxy?server=${IP}&port=${PORT}&secret=${SECRET}${Nc}
-============================\n"
+    echo -e "\n${Green}======= MTProxy 信息 =======${Nc}"
+    echo -e "端口  : ${Yellow}${PORT}${Nc}"
+    echo -e "域名  : ${Blue}${DOMAIN}${Nc}"
+    echo -e "密钥  : ${Yellow}${SECRET}${Nc}"
+    echo -e "链接  : ${Green}tg://proxy?server=${IP}&port=${PORT}&secret=${SECRET}${Nc}"
+    echo -e "============================\n"
 }
 
-# 菜单简写逻辑...
 menu() {
     clear
     echo -e "${Green}MTProxy 管理脚本${Nc}"
     STATUS=$(pgrep -f "mtg|mtprotoproxy" >/dev/null && echo -e "${Green}运行中${Nc}" || echo -e "${Red}未运行${Nc}")
-    echo -e "状态: $STATUS\n1. 安装\n2. 修改\n3. 信息\n4. 重启\n5. 卸载\n0. 退出"
+    echo -e "状态: $STATUS"
+    echo -e "----------------------------"
+    echo -e "1. 安装 MTProxy\n2. 修改 端口或域名\n3. 查看 链接信息\n4. 重启 服务\n5. 卸载 MTProxy\n0. 退出"
     read -p "选择: " choice
     case "$choice" in
         1) install_mtp ;;
         2) source "${CONFIG_DIR}/config" && [[ "$CORE" == "PY" ]] && install_py || install_go ;;
         3) show_info ;;
         4) systemctl restart mtg && echo "已重启" ;;
-        5) systemctl stop mtg; rm -rf "$CONFIG_DIR" "$BIN_PATH" "$PY_DIR" "$MTP_CMD" /etc/systemd/system/mtg.service; echo "已卸载" ;;
+        5) 
+            source "${CONFIG_DIR}/config" && close_port "$PORT"
+            systemctl stop mtg; systemctl disable mtg; rm -rf "$CONFIG_DIR" "$BIN_PATH" "$PY_DIR" "$MTP_CMD" /etc/systemd/system/mtg.service; echo "已卸载" ;;
         *) exit 0 ;;
     esac
 }
