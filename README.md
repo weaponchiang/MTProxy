@@ -31,7 +31,7 @@ bash <(curl -LfsS https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mt
 
 ```bash
 mtp
-
+```
 
 ## ✨ 功能特性
 
