@@ -81,17 +81,18 @@ EOF
 }
 
 install_py_version() {
-    echo -e "${Blue}正在配置 Python 环境...${Nc}"
+    echo -e "${Blue}正在配置环境...${Nc}"
     
-    # 彻底封杀 Debian 13 的交互弹窗
+    # 彻底封杀所有交互弹窗（环境变量三连发）
     export DEBIAN_FRONTEND=noninteractive
+    export NEEDRESTART_MODE=l
+    export NEEDRESTART_SUSPEND=1
     echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections >/dev/null 2>&1
     
-    # 核心修复：增加 --needrestart-i=l 参数（如果存在该命令）并强制自动应答
+    # 加入 -y 和强制覆盖参数，确保不再等回车
     apt-get update
     apt-get install -y -o Dpkg::Options::="--force-confdef" \
                    -o Dpkg::Options::="--force-confold" \
-                   -o Dpkg::Options::="--force-confnew" \
                    python3-dev python3-pip git xxd python3-cryptography debconf-utils
 
     rm -rf "$PY_DIR"
@@ -130,6 +131,7 @@ EOF
 finish_install() {
     open_port "$1"
     systemctl daemon-reload && systemctl enable mtg && systemctl restart mtg
+    # 如果要发布到GitHub，请确保这一行的URL是正确的
     wget -qO "$MTP_CMD" "$SCRIPT_URL" && chmod +x "$MTP_CMD"
     echo -e "${Green}安装成功！${Nc}"
     show_info
@@ -177,20 +179,14 @@ menu() {
         echo -e "服务状态: ${Red}○ 已停止${Nc}"
     fi
     echo -e "----------------------------------"
-    echo -e "1. 安装 / 重置"
-    echo -e "2. 修改配置"
-    echo -e "3. 查看信息"
-    echo -e "4. 更新脚本"
-    echo -e "5. 重启服务"
-    echo -e "6. 停止服务"
-    echo -e "7. 卸载程序"
-    echo -e "0. 退出"
+    echo -e "1. 安装 / 重置\n2. 修改配置\n3. 查看信息\n4. 更新脚本\n5. 重启服务\n6. 停止服务\n7. 卸载程序\n0. 退出"
     echo -e "----------------------------------"
     read -p "选择 [0-7]: " choice
     case "$choice" in
         1) install_mtp ;;
         2) [[ ! -f "${CONFIG_DIR}/config" ]] && echo -e "${Red}未安装！${Nc}" || install_mtp ;;
         3) show_info ;;
+        4) update_script ;;
         5) systemctl restart mtg && echo -e "已重启" ;;
         6) systemctl stop mtg && echo -e "已停止" ;;
         7) uninstall_all ;;
