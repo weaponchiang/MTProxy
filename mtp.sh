@@ -2,7 +2,7 @@
 #=========================================================
 #   System Required: CentOS 7+ / Debian 8+ / Ubuntu 16+
 #   Description: MTProxy (Go & Python) One-click Installer
-#   Author: Gemini & weaponchiang
+#   Version: 3.0 (Integrated for Debian 13)
 #=========================================================
 
 Red="\033[31m"
@@ -18,12 +18,13 @@ BIN_PATH="/usr/local/bin/mtg"
 PY_DIR="/opt/mtprotoproxy"
 MTP_CMD="/usr/local/bin/mtp"
 CONFIG_DIR="/etc/mtg"
+# 脚本在线更新地址
 SCRIPT_URL="https://raw.githubusercontent.com/weaponchiang/MTProxy/main/mtp.sh"
 
 check_root() { [[ "$(id -u)" != "0" ]] && echo -e "${Red}错误: 请以 root 运行！${Nc}" && exit 1; }
 check_init_system() { [[ ! -f /usr/bin/systemctl ]] && echo -e "${Red}错误: 仅支持 Systemd 系统。${Nc}" && exit 1; }
 
-# --- 功能函数 ---
+# --- 端口管理 ---
 open_port() {
     local PORT=$1
     if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
@@ -45,8 +46,9 @@ close_port() {
     iptables -D INPUT -p tcp --dport ${PORT} -j ACCEPT 2>/dev/null
 }
 
+# --- 脚本更新 ---
 update_script() {
-    echo -e "${Blue}正在更新脚本...${Nc}"
+    echo -e "${Blue}正在更新管理脚本...${Nc}"
     TMP_FILE=$(mktemp)
     if wget -qO "$TMP_FILE" "$SCRIPT_URL"; then
         mv "$TMP_FILE" "$MTP_CMD" && chmod +x "$MTP_CMD"
@@ -54,15 +56,15 @@ update_script() {
         echo -e "${Green}更新成功！请重新运行 'mtp'。${Nc}"
         exit 0
     else
-        echo -e "${Red}更新失败。${Nc}"
+        echo -e "${Red}更新失败，请检查网络连接。${Nc}"
     fi
 }
 
 # --- 核心安装逻辑 ---
 install_mtp() {
     echo -e "${Yellow}请选择版本：${Nc}"
-    echo -e "1) Go 版     (9seconds - 推荐)"
-    echo -e "2) Python 版 (alexbers - 兼容)"
+    echo -e "1) Go 版     (9seconds - 推荐：省资源，高性能)"
+    echo -e "2) Python 版 (alexbers - 兼容：适合特定环境)"
     read -p "选择 [1-2]: " core_choice
     [[ "$core_choice" == "2" ]] && install_py_version || install_go_version
 }
@@ -71,7 +73,7 @@ install_go_version() {
     ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
     VERSION=$(curl -s https://api.github.com/repos/9seconds/mtg/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     VERSION=${VERSION:-"v2.1.7"}
-    echo -e "${Blue}正在下载 Go 核心...${Nc}"
+    echo -e "${Blue}正在安装 Go 核心...${Nc}"
     wget -qO- "https://github.com/9seconds/mtg/releases/download/${VERSION}/mtg-${VERSION#v}-linux-${ARCH}.tar.gz" | tar xz -C /tmp
     mv /tmp/mtg-*/mtg "$BIN_PATH" && chmod +x "$BIN_PATH"
     
@@ -79,13 +81,13 @@ install_go_version() {
     read -p "伪装域名 (默认: azure.microsoft.com): " DOMAIN
     DOMAIN=${DOMAIN:-azure.microsoft.com}
     SECRET=$($BIN_PATH generate-secret --hex "$DOMAIN")
-    read -p "端口 (默认随机): " PORT
+    read -p "监听端口 (默认随机): " PORT
     PORT=${PORT:-$((10000 + RANDOM % 20000))}
 
     echo -e "CORE=GO\nPORT=${PORT}\nSECRET=${SECRET}\nDOMAIN=${DOMAIN}" > "${CONFIG_DIR}/config"
     cat > /etc/systemd/system/mtg.service <<EOF
 [Unit]
-Description=MTProxy Service
+Description=MTProxy Go Service
 After=network.target
 [Service]
 ExecStart=${BIN_PATH} simple-run 0.0.0.0:${PORT} ${SECRET}
@@ -97,7 +99,7 @@ EOF
 }
 
 install_py_version() {
-    echo -e "${Blue}正在配置 Python 环境 (彻底静默模式)...${Nc}"
+    echo -e "${Blue}正在配置 Python 环境 (Debian 13 深度静默模式)...${Nc}"
     
     # 彻底解决 Debian 13 卡死的核心设置
     export DEBIAN_FRONTEND=noninteractive
@@ -117,7 +119,7 @@ install_py_version() {
     DOMAIN=${DOMAIN:-azure.microsoft.com}
     RAW_S=$(head -c 16 /dev/urandom | xxd -ps -c 16 | tr -d '[:space:]')
     D_HEX=$(echo -n "$DOMAIN" | xxd -p -c 256 | tr -d '[:space:]')
-    read -p "端口 (默认随机): " PORT
+    read -p "监听端口 (默认随机): " PORT
     PORT=${PORT:-$((10000 + RANDOM % 20000))}
 
     echo -e "CORE=PY\nPORT=${PORT}\nSECRET=ee${RAW_S}${D_HEX}\nDOMAIN=${DOMAIN}\nRAW_SECRET=${RAW_S}\nDOMAIN_HEX=${D_HEX}" > "${CONFIG_DIR}/config"
@@ -129,7 +131,7 @@ TLS_DOMAIN = "${DOMAIN}"
 EOF
     cat > /etc/systemd/system/mtg.service <<EOF
 [Unit]
-Description=MTProxy Service
+Description=MTProxy Python Service
 After=network.target
 [Service]
 WorkingDirectory=${PY_DIR}
@@ -146,8 +148,8 @@ finish_install() {
     systemctl daemon-reload && systemctl enable mtg && systemctl restart mtg
     wget -qO "$MTP_CMD" "$SCRIPT_URL" && chmod +x "$MTP_CMD"
     echo -e "\n${Green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${Nc}"
-    echo -e "${Green}   安装成功！代理服务已在后台运行。          ${Nc}"
-    echo -e "${Yellow}   >>> 管理快捷键: ${Red}mtp${Nc}"
+    echo -e "${Green}   安装成功！服务已进入运行状态。          ${Nc}"
+    echo -e "${Yellow}   >>> 管理快捷命令: ${Red}mtp${Nc}"
     echo -e "${Green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${Nc}\n"
     show_info
 }
@@ -155,7 +157,7 @@ finish_install() {
 show_info() {
     [[ ! -f "${CONFIG_DIR}/config" ]] && return
     source "${CONFIG_DIR}/config"
-    echo -e "${Blue}正在探测外网地址 (支持 IPv6)...${Nc}"
+    echo -e "${Blue}正在探测公网地址 (支持 IPv6)...${Nc}"
     IP4=$(curl -s4 --connect-timeout 5 ip.sb || curl -s4 ipinfo.io/ip)
     IP6=$(curl -s6 --connect-timeout 5 ip.sb || curl -s6 icanhazip.com)
     echo -e "\n${Green}======= MTProxy 信息 (${CORE}版) =======${Nc}"
@@ -167,7 +169,7 @@ show_info() {
 }
 
 uninstall_all() {
-    echo -e "${Yellow}正在深度卸载并清理依赖...${Nc}"
+    echo -e "${Yellow}正在执行深度卸载并清理环境...${Nc}"
     [[ -f "${CONFIG_DIR}/config" ]] && source "${CONFIG_DIR}/config" && close_port "$PORT"
     systemctl stop mtg 2>/dev/null
     systemctl disable mtg 2>/dev/null
@@ -181,17 +183,22 @@ uninstall_all() {
     exit 0
 }
 
+# --- 菜单界面 ---
 menu() {
     clear
     echo -e "${Green}MTProxy (Go/Python) 管理脚本${Nc}"
     echo -e "----------------------------------"
+    
+    # 精准状态检测逻辑
     if systemctl is-active --quiet mtg; then
-        CURRENT_CORE="未知"
-        [[ -f "${CONFIG_DIR}/config" ]] && source "${CONFIG_DIR}/config" && CURRENT_CORE=$CORE
-        echo -e "服务状态: ${Green}● 运行中 (${CURRENT_CORE}版)${Nc}"
+        source "${CONFIG_DIR}/config" 2>/dev/null
+        echo -e "服务状态: ${Green}● 运行中 (${CORE:-未知}版)${Nc}"
+    elif [[ ! -f "/etc/systemd/system/mtg.service" ]]; then
+        echo -e "服务状态: ${Yellow}○ 未安装${Nc}"
     else
         echo -e "服务状态: ${Red}○ 已停止${Nc}"
     fi
+    
     echo -e "----------------------------------"
     echo -e "1. 安装 / 重置"
     echo -e "2. 修改 端口/域名"
